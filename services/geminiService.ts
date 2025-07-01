@@ -1,18 +1,4 @@
-
-import { GoogleGenAI } from "@google/genai";
 import type { Message } from '../types';
-
-// The API key is now checked in the UI component before calling this service.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || "" });
-
-const buildHistoryForGemini = (messages: Message[]) => {
-    return messages
-        .filter(msg => msg.role !== 'assistant' || msg.content)
-        .map(msg => ({
-            role: msg.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: msg.content }],
-        }));
-};
 
 export async function* streamChatResponse(
     messages: Message[], 
@@ -20,53 +6,59 @@ export async function* streamChatResponse(
     useGoogleSearch: boolean
 ): AsyncGenerator<{ textChunk?: string; sources?: { title: string; uri: string }[] }, void, undefined> {
 
-    const history = buildHistoryForGemini(messages.slice(0, -1));
-    const userPrompt = messages[messages.length - 1].content;
-
-    const modelConfig = {
-        model: "gemini-2.5-flash-preview-04-17",
-        contents: [...history, { role: 'user', parts: [{ text: userPrompt }] }],
-        config: {
-            systemInstruction: systemInstruction,
-            ...(useGoogleSearch && { tools: [{ googleSearch: {} }] }),
-        },
-    };
-
     try {
-        if (useGoogleSearch) {
-            const response = await ai.models.generateContent(modelConfig);
+        const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                messages,
+                systemInstruction,
+                useGoogleSearch,
+            }),
+        });
 
-            if (response.text) {
-              yield { textChunk: response.text };
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`API Error: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+
+        if (!response.body) {
+            throw new Error('Response body is null');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                break;
             }
 
-            const groundingMetadata = response.candidates?.[0]?.groundingMetadata;
-            if (groundingMetadata?.groundingChunks?.length) {
-                const sources = groundingMetadata.groundingChunks
-                    .filter(chunk => chunk.web && chunk.web.uri && chunk.web.title)
-                    .map(chunk => ({
-                        uri: chunk.web!.uri!,
-                        title: chunk.web!.title!,
-                    }));
-                if (sources.length > 0) {
-                  yield { sources };
-                }
-            }
-        } else {
-            const result = await ai.models.generateContentStream(modelConfig);
-
-            for await (const chunk of result) {
-                if (chunk.text) {
-                    yield { textChunk: chunk.text };
+            const chunk = decoder.decode(value, { stream: true });
+            // SSE format sends data in "data: { ... }\n\n" blocks.
+            const lines = chunk.split('\n\n').filter(line => line.trim());
+            for (const line of lines) {
+                 if (line.startsWith('data: ')) {
+                    const jsonString = line.substring(6);
+                    if (jsonString) {
+                         try {
+                            const parsed = JSON.parse(jsonString);
+                            yield parsed;
+                        } catch(e) {
+                            console.error("Failed to parse SSE JSON chunk:", jsonString);
+                        }
+                    }
                 }
             }
         }
-
     } catch (e) {
-        console.error("Gemini API call failed:", e);
+        console.error("Frontend service error:", e);
         if (e instanceof Error) {
-            throw new Error(`Gemini API Error: ${e.message}`);
+            throw new Error(`Service Error: ${e.message}`);
         }
-        throw new Error("An unknown error occurred while communicating with the Gemini API.");
+        throw new Error("An unknown error occurred while communicating with the backend service.");
     }
 }
