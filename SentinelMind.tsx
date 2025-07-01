@@ -41,12 +41,6 @@ const SentinelMind: React.FC = () => {
 
   const handleSend = useCallback(async (prompt: string, useGoogleSearch: boolean) => {
     if (isLoading || !prompt.trim()) return;
-    
-    if (!process.env.API_KEY) {
-        setError("`API_KEY` is not configured. Please set it up in your environment to communicate with the AI Core.");
-        setIsLoading(false);
-        return;
-    }
 
     setError(null);
     setIsLoading(true);
@@ -54,11 +48,7 @@ const SentinelMind: React.FC = () => {
       setView('chat');
     }
 
-    const initialMessages: Message[] = messages.length > 0 ? messages : [{
-          role: 'assistant',
-          content: '`SENTINELMIND ONLINE. AWAITING DIRECTIVE.`',
-          id: Date.now(),
-        }];
+    const initialMessages: Message[] = messages.length > 0 ? messages : [];
 
     const newUserMessage: Message = {
       id: Date.now(),
@@ -150,6 +140,9 @@ const SentinelMind: React.FC = () => {
           <main className="h-full p-4 md:p-6 scroll-smooth">
             <div className="mx-auto max-w-4xl w-full h-full flex flex-col">
               <div className="flex-1 space-y-6">
+                 {messages.length === 0 && (
+                     <ChatMessage message={{ role: 'assistant', content: '`SENTINELMIND ONLINE. AWAITING DIRECTIVE.`', id: 1 }} />
+                  )}
                 {messages.map((msg) => (
                   <ChatMessage key={msg.id} message={msg} />
                 ))}
